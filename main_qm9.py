@@ -6,6 +6,7 @@ import argparse
 from qm9 import utils as qm9_utils
 import utils
 import json
+from kabsch import kabsch, rmsd, distance_loss
 
 parser = argparse.ArgumentParser(description='QM9 Example')
 parser.add_argument('--exp_name', type=str, default='exp_1', metavar='N',
@@ -62,11 +63,31 @@ meann, mad = qm9_utils.compute_mean_mad(dataloaders, args.property)
 model = EGNN(in_node_nf=15, in_edge_nf=0, hidden_nf=args.nf, device=device,
                  n_layers=args.n_layers, coords_weight=1.0, attention=args.attention, node_attr=args.node_attr)
 
-print(model)
+# print(model)
 
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
 loss_l1 = nn.L1Loss()
+
+def my_loss(atom_position, atom_position_pred, batch_size, n_nodes):
+    position_list = atom_position.split(n_nodes, dim=0)
+    position_pred_list = atom_position_pred.split(n_nodes, dim=0)
+    loss = torch.tensor(0).type(torch.float32)
+
+    for i, data in enumerate(zip(position_list,position_pred_list)):
+        non_zero_rows = torch.abs(data[0]).sum(dim=1) > 0
+        pos, fit_pos = kabsch(data[0][non_zero_rows], data[1][non_zero_rows], use_cuda=False)
+        rmsd_loss = rmsd(pos, fit_pos)
+        dis_loss = distance_loss(pos, fit_pos)
+        loss += rmsd_loss+dis_loss
+
+        # print(loss)
+
+    loss = loss/batch_size
+
+    return loss
+
+
 
 
 def train(epoch, loader, partition='train'):
@@ -81,8 +102,14 @@ def train(epoch, loader, partition='train'):
         else:
             model.eval()
 
-        batch_size, n_nodes, _ = data['positions'].size()
+        batch_size, n_nodes, dim_coord = data['positions'].size()
         atom_positions = data['positions'].view(batch_size * n_nodes, -1).to(device, dtype)
+        atom_positions_random = torch.Tensor(batch_size * n_nodes, dim_coord)
+        torch.nn.init.normal_(atom_positions_random, mean=0, std=1)
+        # print(atom_positions.shape)
+        # print(atom_positions_random.shape)
+        # print(atom_positions)
+        # print(atom_positions_random)
         atom_mask = data['atom_mask'].view(batch_size * n_nodes, -1).to(device, dtype)
         edge_mask = data['edge_mask'].to(device, dtype)
         one_hot = data['one_hot'].to(device, dtype)
@@ -92,18 +119,23 @@ def train(epoch, loader, partition='train'):
         nodes = nodes.view(batch_size * n_nodes, -1)
         # nodes = torch.cat([one_hot, charges], dim=1)
         edges = qm9_utils.get_adj_matrix(n_nodes, batch_size, device)
+        # print(n_nodes,batch_size)
+        # print(len(edges),edges[0].shape,edges[1].shape)
+        # print(edges)
         label = data[args.property].to(device, dtype)
 
-        pred = model(h0=nodes, x=atom_positions, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
+        pred = model(h0=nodes, x=atom_positions_random, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
                      n_nodes=n_nodes)
 
 
         if partition == 'train':
-            loss = loss_l1(pred, (label - meann) / mad)
+            # loss = loss_l1(pred, (label - meann) / mad)
+            loss = my_loss(atom_positions, pred, batch_size, n_nodes)
             loss.backward()
             optimizer.step()
         else:
-            loss = loss_l1(mad * pred + meann, label)
+            # loss = loss_l1(mad * pred + meann, label)
+            loss = my_loss(atom_positions, pred, batch_size, n_nodes)
 
 
         res['loss'] += loss.item() * batch_size

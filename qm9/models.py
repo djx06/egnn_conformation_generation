@@ -15,7 +15,7 @@ class E_GCL_mask(E_GCL):
     def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_attr_dim=0, act_fn=nn.ReLU(), recurrent=True, coords_weight=1.0, attention=False):
         E_GCL.__init__(self, input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_attr_dim, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention)
 
-        del self.coord_mlp
+        # del self.coord_mlp
         self.act_fn = act_fn
 
     def coord_model(self, coord, edge_index, coord_diff, edge_feat, edge_mask):
@@ -35,7 +35,7 @@ class E_GCL_mask(E_GCL):
 
         # TO DO: edge_feat = edge_feat * edge_mask
 
-        #coord = self.coord_model(coord, edge_index, coord_diff, edge_feat, edge_mask)
+        coord = self.coord_model(coord, edge_index, coord_diff, edge_feat, edge_mask)
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
 
         return h, coord, edge_attr
@@ -72,17 +72,19 @@ class EGNN(nn.Module):
         h = self.embedding(h0)
         for i in range(0, self.n_layers):
             if self.node_attr:
-                h, _, _ = self._modules["gcl_%d" % i](h, edges, x, node_mask, edge_mask, edge_attr=edge_attr, node_attr=h0, n_nodes=n_nodes)
+                h, coord, _ = self._modules["gcl_%d" % i](h, edges, x, node_mask, edge_mask, edge_attr=edge_attr, node_attr=h0, n_nodes=n_nodes)
             else:
-                h, _, _ = self._modules["gcl_%d" % i](h, edges, x, node_mask, edge_mask, edge_attr=edge_attr,
+                h, coord, _ = self._modules["gcl_%d" % i](h, edges, x, node_mask, edge_mask, edge_attr=edge_attr,
                                                       node_attr=None, n_nodes=n_nodes)
 
-        h = self.node_dec(h)
-        h = h * node_mask
-        h = h.view(-1, n_nodes, self.hidden_nf)
-        h = torch.sum(h, dim=1)
-        pred = self.graph_dec(h)
-        return pred.squeeze(1)
+        # h = self.node_dec(h)
+        # print(h.shape, node_mask.shape, edge_mask.shape)
+        # h = h * node_mask
+        # h = h.view(-1, n_nodes, self.hidden_nf)
+        # h = torch.sum(h, dim=1)
+        # pred = self.graph_dec(h)
+        # return pred.squeeze(1)
+        return coord
 
 
 
