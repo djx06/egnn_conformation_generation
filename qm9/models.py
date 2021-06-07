@@ -78,7 +78,7 @@ class EGNN(nn.Module):
                                                       node_attr=None, n_nodes=n_nodes)
 
         # h = self.node_dec(h)
-        # print(h.shape, node_mask.shape, edge_mask.shape)
+        # # print(h.shape, node_mask.shape, edge_mask.shape)
         # h = h * node_mask
         # h = h.view(-1, n_nodes, self.hidden_nf)
         # h = torch.sum(h, dim=1)
