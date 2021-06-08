@@ -92,7 +92,8 @@ def rmsd_loss(src: torch.Tensor, tgt: torch.Tensor, batch_size, n_nodes, mass: t
 
 def distance_loss(src: torch.Tensor, tgt: torch.Tensor, edge_index, batch_size, n_nodes, node_mask, use_cuda=False):
     row, col = edge_index
-    coord_diff_diff = torch.pow(torch.pow(src[row] - src[col], 2).sum(dim=1) - torch.pow(tgt[row] - tgt[col],2).sum(dim=1), 2)
+    # coord_diff_diff = torch.pow(torch.pow(src[row] - src[col], 2).sum(dim=1) - torch.pow(tgt[row] - tgt[col],2).sum(dim=1), 2)
+    coord_diff_diff = torch.pow(torch.norm(src[row] - src[col], dim=1) - torch.norm(tgt[row] - tgt[col], dim=1),2)
     coord_diff_diff = coord_diff_diff.view(batch_size, n_nodes**2)
     n = node_mask.view(batch_size, n_nodes).sum(dim=1)
     loss = (coord_diff_diff.sum(dim=1)/(n*n)).sum() / batch_size
@@ -131,8 +132,13 @@ if __name__ == '__main__':
     ], dtype=torch.float32)
     # print(mnm.shape)
     node_mask = torch.tensor([[1], [1], [1], [1], [1], [1], [1], [1], [0]]).to(dtype=torch.float32)
-    pos, fit_pos = kabsch(pos, fit_pos, 3, 3, node_mask)
+    edge_index = [torch.tensor([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8]),
+                  torch.tensor([0, 1, 2, 0, 1, 2, 0, 1, 2, 3, 4, 5, 3, 4, 5, 3, 4, 5, 6, 7, 8, 6, 7, 8, 6, 7, 8])]
     np.set_printoptions(precision=3, suppress=True)
+
+    d = distance_loss(pos, fit_pos, edge_index, 3, 3, node_mask)
+    print(d)
+    pos, fit_pos = kabsch(pos, fit_pos, 3, 3, node_mask)
     # print(pos.numpy())
     # print(fit_pos.numpy())
 
@@ -140,7 +146,6 @@ if __name__ == '__main__':
     print(r)
     r = rmsd_loss(pos, fit_pos, 3, 3, node_mask)
     print(r)
-    edge_index = [torch.tensor([0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,6,6,6,7,7,7,8,8,8]),
-                  torch.tensor([0,1,2,0,1,2,0,1,2,3,4,5,3,4,5,3,4,5,6,7,8,6,7,8,6,7,8])]
+
     d = distance_loss(pos, fit_pos, edge_index, 3, 3, node_mask)
     print(d)

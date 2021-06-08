@@ -1,0 +1,1 @@
+Namespace(attention=1, batch_size=96, charge_power=2, cuda=False, dataset_paper='cormorant', epochs=1, exp_name='exp_2_alpha', log_interval=20, lr=0.0005, n_layers=4, nf=8, no_cuda=False, node_attr=0, num_workers=1, outf='qm9/logs', property='alpha', seed=1, test_interval=1, weight_decay=1e-16)

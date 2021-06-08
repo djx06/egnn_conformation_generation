@@ -18,7 +18,7 @@ parser.add_argument('--exp_name', type=str, default='exp_1', metavar='N',
                     help='experiment_name')
 parser.add_argument('--batch_size', type=int, default=96, metavar='N',
                     help='input batch size for training (default: 128)')
-parser.add_argument('--epochs', type=int, default=5, metavar='N',
+parser.add_argument('--epochs', type=int, default=50, metavar='N',
                     help='number of epochs to train (default: 10)')
 
 parser.add_argument('--no-cuda', action='store_true', default=False,
@@ -33,11 +33,11 @@ parser.add_argument('--outf', type=str, default='qm9/logs', metavar='N',
                     help='folder to output vae')
 parser.add_argument('--lr', type=float, default=1e-3, metavar='N',
                     help='learning rate')
-parser.add_argument('--nf', type=int, default=32, metavar='N',
+parser.add_argument('--nf', type=int, default=64, metavar='N',
                     help='learning rate')
 parser.add_argument('--attention', type=int, default=1, metavar='N',
                     help='attention in the ae model')
-parser.add_argument('--n_layers', type=int, default=4, metavar='N',
+parser.add_argument('--n_layers', type=int, default=7, metavar='N',
                     help='number of layers for the autoencoder')
 parser.add_argument('--property', type=str, default='homo', metavar='N',
                     help='label to predict: alpha | gap | homo | lumo | mu | Cv | G | H | r2 | U | U0 | zpve')
@@ -68,11 +68,17 @@ meann, mad = qm9_utils.compute_mean_mad(dataloaders, args.property)
 model = EGNN(in_node_nf=15, in_edge_nf=0, hidden_nf=args.nf, device=device,
                  n_layers=args.n_layers, coords_weight=1.0, attention=args.attention, node_attr=args.node_attr)
 
+# if torch.cuda.device_count() > 1:
+#     print("Total ", torch.cuda.device_count(), "GPUs!")
+# model = nn.DataParallel(model.cuda())
+
 # print(model)
 
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
 loss_l1 = nn.L1Loss()
+
+use_cuda = False
 
 def my_loss(atom_position, atom_position_pred, batch_size, n_nodes, atom_mask, edges):
     # position_list = atom_position.split(n_nodes, dim=0)
@@ -90,12 +96,23 @@ def my_loss(atom_position, atom_position_pred, batch_size, n_nodes, atom_mask, e
     #     total_dis_loss += dis_loss
     #     loss += rmsd_loss+dis_loss
 
-    pos, fit_pos = kabsch(atom_position_pred, atom_position, batch_size, n_nodes, atom_mask, use_cuda=False)
+    pos, fit_pos = kabsch(atom_position_pred, atom_position, batch_size, n_nodes, atom_mask, use_cuda=use_cuda)
     # pos = atom_position
     # fit_pos = atom_position_pred
-    r_loss = rmsd_loss(pos, fit_pos, batch_size, n_nodes, atom_mask, use_cuda=False)
-    dis_loss = distance_loss(pos, fit_pos, edges, batch_size, n_nodes, atom_mask, use_cuda=False)
-    # loss = total_rmsd_loss
+    # r_loss = torch.tensor(0).to(device, dtype)
+    # dis_loss = distance_loss(atom_position_pred, atom_position, edges, batch_size, n_nodes, atom_mask, use_cuda=False)
+    # print(dis_loss)
+    r_loss = rmsd_loss(pos, fit_pos, batch_size, n_nodes, atom_mask, use_cuda=use_cuda)
+    dis_loss = distance_loss(pos, fit_pos, edges, batch_size, n_nodes, atom_mask, use_cuda=use_cuda)
+    # print(dis_loss)
+    loss = r_loss + dis_loss
+
+    return loss, r_loss, dis_loss
+
+def my_loss_simple(atom_position, atom_position_pred, batch_size, n_nodes, atom_mask, edges):
+
+    r_loss = torch.tensor(0).to(device, dtype)
+    dis_loss = distance_loss(atom_position_pred, atom_position, edges, batch_size, n_nodes, atom_mask, use_cuda=use_cuda)
     loss = r_loss + dis_loss
 
     return loss, r_loss, dis_loss
@@ -142,15 +159,18 @@ def train(epoch, loader, partition='train'):
         pred = model(h0=nodes, x=atom_positions_random, edges=edges, edge_attr=None, node_mask=atom_mask, edge_mask=edge_mask,
                      n_nodes=n_nodes)
 
-        loss, rmsd_loss, dis_loss = my_loss(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
+
         if partition == 'train':
             # loss = loss_l1(pred, (label - meann) / mad)
             # loss = my_loss(atom_positions, pred, batch_size, n_nodes)
+            # loss, rmsd_loss, dis_loss = my_loss_simple(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
+            loss, rmsd_loss, dis_loss = my_loss(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
             loss.backward()
             optimizer.step()
-        # else:
-        #     # loss = loss_l1(mad * pred + meann, label)
-        #     loss = my_loss(atom_positions, pred, batch_size, n_nodes)
+        else:
+            # loss = loss_l1(mad * pred + meann, label)
+            loss, rmsd_loss, dis_loss = my_loss(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
+
 
 
         res['loss'] += loss.item() * batch_size
@@ -195,4 +215,4 @@ if __name__ == "__main__":
         with open(args.outf + "/" + args.exp_name + "/losess.json", "w") as outfile:
             outfile.write(json_object)
 
-    torch.save(model, '/model.pkl')
+    torch.save(model, args.outf + "/" + args.exp_name + '/model.pkl')
