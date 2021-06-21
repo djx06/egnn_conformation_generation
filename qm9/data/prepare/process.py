@@ -6,6 +6,10 @@ from torch.nn.utils.rnn import pad_sequence
 
 charge_dict = {'H': 1, 'C': 6, 'N': 7, 'O': 8, 'F': 9}
 
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+# logger.setLevel(logging.WARNING)
+
 
 def split_dataset(data, split_idxs):
     """
@@ -34,6 +38,7 @@ def split_dataset(data, split_idxs):
 
 
 def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, stack=True):
+    logger.info('enter process_XYZ_files')
     """
     Take a set of datafiles and apply a predefined data processing script to each
     one. Data can be stored in a directory, tarfile, or zipfile. An optional
@@ -104,6 +109,7 @@ def process_xyz_files(data, process_file_fn, file_ext=None, file_idx_list=None, 
 
 
 def process_xyz_md17(datafile):
+    logger.info('enter process_XYZ_md17')
     """
     Read xyz file and return a molecular dict with number of atoms, energy, forces, coordinates and atom-type for the MD-17 dataset.
 
@@ -159,6 +165,7 @@ def process_xyz_md17(datafile):
 
 
 def process_xyz_gdb9(datafile):
+    logger.info('enter process_XYZ_gdb9')
     """
     Read xyz file and return a molecular dict with number of atoms, energy, forces, coordinates and atom-type for the gdb9 dataset.
 
@@ -186,14 +193,17 @@ def process_xyz_gdb9(datafile):
     atom_charges, atom_positions = [], []
     for line in mol_xyz:
         atom, posx, posy, posz, _ = line.replace('*^', 'e').split()
-        atom_charges.append(charge_dict[atom])
-        atom_positions.append([float(posx), float(posy), float(posz)])
+        if atom != 'H':
+            atom_charges.append(charge_dict[atom])
+            atom_positions.append([float(posx), float(posy), float(posz)])
 
     prop_strings = ['tag', 'index', 'A', 'B', 'C', 'mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'U0', 'U', 'H', 'G', 'Cv']
     prop_strings = prop_strings[1:]
     mol_props = [int(mol_props[1])] + [float(x) for x in mol_props[2:]]
     mol_props = dict(zip(prop_strings, mol_props))
     mol_props['omega1'] = max(float(omega) for omega in mol_freq.split())
+
+    num_atoms = len(atom_charges)
 
     molecule = {'num_atoms': num_atoms, 'charges': atom_charges, 'positions': atom_positions}
     molecule.update(mol_props)

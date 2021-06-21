@@ -13,14 +13,30 @@ class E_GCL_mask(E_GCL):
     """
 
     def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_attr_dim=0, act_fn=nn.ReLU(), recurrent=True, coords_weight=1.0, attention=False):
-        E_GCL.__init__(self, input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_attr_dim, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention)
+        E_GCL.__init__(self, input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_attr_dim, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention, norm_diff=False)
 
         # del self.coord_mlp
         self.act_fn = act_fn
 
     def coord_model(self, coord, edge_index, coord_diff, edge_feat, edge_mask):
         row, col = edge_index
+        # print(torch.sum(self.coord_mlp(edge_feat)))
+        # print('mlp:',self.coord_mlp(edge_feat)[1000:1005])
         trans = coord_diff * self.coord_mlp(edge_feat) * edge_mask
+        agg = unsorted_segment_sum(trans, row, num_segments=coord.size(0))
+        coord += agg*self.coords_weight
+        return coord
+
+    def coord_model_new(self, coord, edge_index, coord_diff, edge_feat, edge_mask, radial):
+        row, col = edge_index
+        # print(torch.sum(self.coord_mlp(edge_feat)))
+        # norm = torch.sum(torch.sqrt(radial))
+        # norm1 = torch.sum(self.coord_mlp(edge_feat) - torch.sqrt(radial)/norm)
+        print('mlp:',self.coord_mlp(edge_feat)[1000:1005])
+        print('radial',(torch.sqrt(radial))[1000:1005])
+        norm = torch.sqrt(radial) + 1
+        coord_diff = coord_diff / (norm)
+        trans = coord_diff * ((self.coord_mlp(edge_feat) - torch.sqrt(radial))) * edge_mask
         agg = unsorted_segment_sum(trans, row, num_segments=coord.size(0))
         coord += agg*self.coords_weight
         return coord
@@ -28,6 +44,7 @@ class E_GCL_mask(E_GCL):
     def forward(self, h, edge_index, coord, node_mask, edge_mask, edge_attr=None, node_attr=None, n_nodes=None):
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
+        # print(torch.sqrt(radial)[1000:1005])
 
         edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
 
@@ -36,6 +53,7 @@ class E_GCL_mask(E_GCL):
         # TO DO: edge_feat = edge_feat * edge_mask
 
         coord = self.coord_model(coord, edge_index, coord_diff, edge_feat, edge_mask)
+        # coord = self.coord_model_new(coord, edge_index, coord_diff, edge_feat, edge_mask, radial)
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
 
         return h, coord, edge_attr

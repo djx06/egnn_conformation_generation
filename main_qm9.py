@@ -10,6 +10,10 @@ import utils
 import json
 from kabsch import kabsch, rmsd_loss, distance_loss
 import os
+import time
+import psutil
+from functools import wraps
+
 
 os.environ['CUDA_VISIBLE_DEVICES']='2'
 
@@ -65,7 +69,7 @@ dataloaders, charge_scale = dataset.retrieve_dataloaders(args.batch_size, args.n
 # compute mean and mean absolute deviation
 meann, mad = qm9_utils.compute_mean_mad(dataloaders, args.property)
 
-model = EGNN(in_node_nf=15, in_edge_nf=0, hidden_nf=args.nf, device=device,
+model = EGNN(in_node_nf=12, in_edge_nf=0, hidden_nf=args.nf, device=device,
                  n_layers=args.n_layers, coords_weight=1.0, attention=args.attention, node_attr=args.node_attr)
 
 # if torch.cuda.device_count() > 1:
@@ -78,23 +82,9 @@ optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
 loss_l1 = nn.L1Loss()
 
-use_cuda = False
+use_cuda = True
 
 def my_loss(atom_position, atom_position_pred, batch_size, n_nodes, atom_mask, edges):
-    # position_list = atom_position.split(n_nodes, dim=0)
-    # position_pred_list = atom_position_pred.split(n_nodes, dim=0)
-    # loss = torch.tensor(0).to(device, dtype)
-    # total_rmsd_loss = torch.tensor(0).to(device, dtype)
-    # total_dis_loss = torch.tensor(0).to(device, dtype)
-    #
-    # for i, data in enumerate(zip(position_list,position_pred_list)):
-    #     non_zero_rows = torch.abs(data[0]).sum(dim=1) > 0
-    #     pos, fit_pos = kabsch(data[0][non_zero_rows], data[1][non_zero_rows], batch_size, n_nodes, use_cuda=False)
-    #     rmsd_loss = rmsd(pos, fit_pos, use_cuda=False)
-    #     dis_loss = distance_loss(pos, fit_pos, use_cuda=False)
-    #     total_rmsd_loss += rmsd_loss
-    #     total_dis_loss += dis_loss
-    #     loss += rmsd_loss+dis_loss
 
     pos, fit_pos = kabsch(atom_position_pred, atom_position, batch_size, n_nodes, atom_mask, use_cuda=use_cuda)
     # pos = atom_position
@@ -117,8 +107,33 @@ def my_loss_simple(atom_position, atom_position_pred, batch_size, n_nodes, atom_
 
     return loss, r_loss, dis_loss
 
+def show_info():
+    pid = os.getpid()
+    p = psutil.Process(pid)
+    info = p.memory_full_info()
+    memory = info.uss/1024
+    return memory
 
+def count_info(func):
+    @wraps(func)
+    def float_info(*args, **kwargs):
+        pid = os.getpid()
+        p = psutil.Process(pid)
+        info_start = p.memory_full_info().uss/1024
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        info_end=p.memory_full_info().uss/1024
+        end_time = time.time()
+        print('Time: %.4f s \t Memory: %d KB' % (end_time-start_time, int(info_end-info_start)))
+        return result
+    return float_info
+
+
+@ count_info
 def train(epoch, loader, partition='train'):
+    # start_time = time.time()
+    # start_mem = show_info()
+
     lr_scheduler.step()
     res = {'loss': 0, 'rmsd_loss':0, 'dis_loss':0, 'counter': 0, 'loss_arr':[]}
     print(len(loader))
@@ -144,7 +159,7 @@ def train(epoch, loader, partition='train'):
         edge_mask = data['edge_mask'].to(device, dtype)
         one_hot = data['one_hot'].to(device, dtype)
         charges = data['charges'].to(device, dtype)
-        nodes = qm9_utils.preprocess_input(one_hot, charges, args.charge_power, charge_scale, device)
+        nodes = qm9_utils.preprocess_input(one_hot, charges, args.charge_power, charge_scale, device) #96*9*12
 
         nodes = nodes.view(batch_size * n_nodes, -1)
         # nodes = torch.cat([one_hot, charges], dim=1)
@@ -163,8 +178,8 @@ def train(epoch, loader, partition='train'):
         if partition == 'train':
             # loss = loss_l1(pred, (label - meann) / mad)
             # loss = my_loss(atom_positions, pred, batch_size, n_nodes)
-            # loss, rmsd_loss, dis_loss = my_loss_simple(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
-            loss, rmsd_loss, dis_loss = my_loss(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
+            loss, rmsd_loss, dis_loss = my_loss_simple(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
+            # loss, rmsd_loss, dis_loss = my_loss(atom_positions, pred, batch_size, n_nodes, atom_mask, edges)
             loss.backward()
             optimizer.step()
         else:
@@ -182,6 +197,11 @@ def train(epoch, loader, partition='train'):
         prefix = ""
         if partition != 'train':
             prefix = ">> %s \t" % partition
+
+        # end_time = time.time()
+        # end_mem = show_info()
+        # dif_time = end_time - start_time
+        # dif_mem = end_mem - start_mem
 
         if i % args.log_interval == 0:
             tmp_res = np.array(res['loss_arr'][-10:])
